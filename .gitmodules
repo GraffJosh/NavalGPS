@@ -1,0 +1,6 @@
+[submodule "micropyGPS"]
+	path = micropyGPS
+	url = .\\micropyGPS\\
+[submodule "uQR"]
+	path = uQR
+	url = .\\uQR\\
