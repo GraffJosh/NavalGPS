@@ -1,5 +1,6 @@
 import badger2040
-from machine import UART
+import badger_os
+from machine import UART, Pin
 import time
 from micropyGPS.micropyGPS import MicropyGPS
 from uQR.uQR import QRCode
@@ -44,31 +45,29 @@ GPS data not available!
 #        Program setup
 # ------------------------------
 class GPSData:
+    power_pin = 22
     gps_time = "0:0:0"
     lat = "0"
     lon = "0"
     speed = "0"
     heading = "0"
     sats = "0"
+    connectedText = ""
 
-    def __init__(self, display) -> None:
+    def __init__(self, display, power_pin=22) -> None:
         self.display = display
         self.qr = QRCode(
             box_size=4,
             border=2,
         )
         self.uart = UART(1, 9600)
+        self.power_pin = Pin(power_pin, Pin.OUT)
         self.gps = MicropyGPS(-4)
         self.last_fix_time = 0
         self.data_is_fresh = False
         self.lastGPSString = ""
 
-        self.udpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.udpSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.udpPort = 2947
-        self.udpAddr = socket.getaddrinfo("255.255.255.255", self.udpPort, 0, socket.SOCK_STREAM)[
-            0
-        ][-1]
+        self.socket_is_configured = False
 
     # ------------------------------
     #      Utility functions
@@ -119,8 +118,6 @@ class GPSData:
     def draw_gps(self, data):
         self.display.set_pen(0)
 
-        badge_image = "/badges/badge.jpg"  # /badges/badge.jpg
-
         # Draw a white backgrounds behind the details
         self.display.set_pen(15)
         self.display.rectangle(0, 0, WIDTH, HEIGHT)
@@ -130,7 +127,7 @@ class GPSData:
         self.display.set_pen(0)
         self.display.set_font("serif")
         self.display.text(
-            self.truncatestring(self.gps_time, TEXT_SIZE, TEXT_WIDTH) + " " + self.sats,
+            self.truncatestring(self.gps_time, TEXT_SIZE, TEXT_WIDTH),
             LEFT_PADDING,
             TEXT_HEIGHT,
             WIDTH - IMAGE_WIDTH,
@@ -157,14 +154,19 @@ class GPSData:
             WIDTH - IMAGE_WIDTH,
             TEXT_SIZE,
         )
-        if self.display.isconnected():
-            self.display.text(
-                "connected",
-                LEFT_PADDING,
-                TEXT_HEIGHT * 5,
-                WIDTH - IMAGE_WIDTH,
-                TEXT_SIZE,
-            )
+        self.display.text(
+            self.connectedText,
+            LEFT_PADDING,
+            TEXT_HEIGHT * 5,
+            WIDTH - IMAGE_WIDTH,
+            TEXT_SIZE,
+        )
+
+    def gps_power(self, enable=False):
+        if enable:
+            self.power_pin.value(1)
+        else:
+            self.power_pin.value(0)
 
     def new_data(self):
         return self.data_is_fresh
@@ -190,9 +192,16 @@ class GPSData:
         )
         self.lat = self.gps.latitude_string("dms")
         self.lon = self.gps.longitude_string("dms")
-        self.speed = self.gps.speed_string("knot")
+        try:
+            self.speed = round(self.gps.speed_string("knot"), 2)
+        except:
+            self.speed = "0 knots"
         self.heading = self.gps.heading_string()
-        self.sats = str(self.gps.satellites_in_view)
+        self.sats = "sats: " + str(self.gps.satellites_in_view)
+        if self.display.isconnected():
+            self.connectedText = self.sats + " " + "WiFi" + " " + str(badger_os.get_battery_level())
+        else:
+            self.connectedText = self.sats
 
     # ------------------------------
     #       Main program
@@ -214,5 +223,13 @@ class GPSData:
 
     def gps_broadcast(self):
         if self.display.isconnected():
+            if not self.socket_is_configured:
+                self.udpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.udpSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.udpPort = 2947
+                self.udpAddr = socket.getaddrinfo(
+                    "255.255.255.255", self.udpPort, 0, socket.SOCK_STREAM
+                )[0][-1]
+                self.socket_is_configured = True
             if self.lastGPSString:
                 self.udpSocket.sendto(self.lastGPSString, self.udpAddr)
